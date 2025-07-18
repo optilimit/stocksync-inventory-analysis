@@ -37,13 +37,6 @@
             font-size: 0.85em;
             margin-bottom: 10px;
         }
-        .input-description {
-            color: #718096;
-            font-size: 0.8em;
-            margin-top: -10px;
-            margin-bottom: 15px;
-            text-align: left;
-        }
         .card {
             background-color: #ffffff;
             padding: 15px;
@@ -268,12 +261,10 @@
             <div class="input-group">
                 <label for="uploadSales">Upload Sales Data (CSV)</label>
                 <input type="file" id="uploadSales" accept=".csv">
-                <div class="input-description">Required columns: <code>stock_id</code>, <code>product_name</code>, <code>sales_date</code>, <code>quantity</code></div>
             </div>
             <div class="input-group">
                 <label for="uploadPurchases">Upload Purchase Data (CSV)</label>
                 <input type="file" id="uploadPurchases" accept=".csv">
-                <div class="input-description">Required columns: <code>stock_id</code>, <code>product_name</code>, <code>purchase_date</code>, <code>order_date</code>, <code>quantity</code></div>
             </div>
             <div class="input-group">
                 <label for="service_reliability">Service Reliability</label>
@@ -323,89 +314,31 @@
             return (dailySales * leadTime) + safetyStock || 0;
         }
 
-        function getMean(values) {
-            const valid = values.map(Number).filter(v => !isNaN(v));
-            return valid.length ? valid.reduce((sum, v) => sum + v, 0) / valid.length : 0;
-        }
-
-        function getMode(values) {
-            const frequency = {};
-            let maxFreq = 0;
-            let mode = values[0] || 'Unknown';
-            values.forEach(value => {
-                frequency[value] = (frequency[value] || 0) + 1;
-                if (frequency[value] > maxFreq) {
-                    maxFreq = frequency[value];
-                    mode = value;
-                }
-            });
-            return mode || 'Unknown';
-        }
-
-        function getMostRecentDate(dates) {
-            const validDates = dates.map(d => new Date(d)).filter(d => !isNaN(d));
-            return validDates.length ? new Date(Math.max(...validDates)).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
-        }
-
-        function processCSVFile(file, requiredHeaders) {
+        function processCSVFile(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     const text = e.target.result;
                     const rows = text.split('\n').map(row => row.split(',').map(cell => cell.trim()));
-                    const headers = rows[0].map(h => h.trim());
+                    const headers = rows[0].map(h => h.toLowerCase());
+                    const requiredHeaders = ['stock_id', 'product_name', 'sales_date', 'quantity'];
                     if (!requiredHeaders.every(h => headers.includes(h))) {
-                        reject(new Error(`CSV must include ${requiredHeaders.join(', ')}. Column names are case-sensitive.`));
+                        reject(new Error('CSV must include stock_id, product_name, sales_date, and quantity.'));
                         return;
                     }
-
                     const data = rows.slice(1)
-                        .filter(row => row.length >= requiredHeaders.length && row.some(cell => cell))
+                        .filter(row => row.length === headers.length && row.some(cell => cell))
                         .map(row => {
                             const obj = {};
                             headers.forEach((header, idx) => {
-                                if (requiredHeaders.includes(header)) {
-                                    obj[header] = row[idx] || '';
-                                }
+                                obj[header] = row[idx];
                             });
                             return obj;
                         });
-
                     if (data.length > 1000) {
                         reject(new Error('Upload limit exceeded. Maximum 1000 records allowed.'));
                         return;
                     }
-
-                    const stockIds = data.map(row => row.stock_id).filter(Boolean);
-                    const productNames = data.map(row => row.product_name).filter(Boolean);
-                    const salesDates = data.map(row => row.sales_date).filter(Boolean);
-                    const purchaseDates = data.map(row => row.purchase_date).filter(Boolean);
-                    const orderDates = data.map(row => row.order_date).filter(Boolean);
-                    const quantities = data.map(row => row.quantity).filter(Boolean);
-                    const defaultStockId = getMode(stockIds);
-                    const defaultProductName = getMode(productNames);
-                    const defaultSalesDate = getMostRecentDate(salesDates);
-                    const defaultPurchaseDate = getMostRecentDate(purchaseDates);
-                    const defaultOrderDate = getMostRecentDate(orderDates);
-                    const defaultQuantity = getMean(quantities);
-
-                    data.forEach(row => {
-                        row.stock_id = row.stock_id || defaultStockId;
-                        row.product_name = row.product_name || defaultProductName;
-                        if (row.sales_date) {
-                            row.sales_date = row.sales_date && !isNaN(new Date(row.sales_date)) ? row.sales_date : defaultSalesDate;
-                        }
-                        if (row.purchase_date) {
-                            row.purchase_date = row.purchase_date && !isNaN(new Date(row.purchase_date)) ? row.purchase_date : defaultPurchaseDate;
-                        }
-                        if (row.order_date) {
-                            row.order_date = row.order_date && !isNaN(new Date(row.order_date)) ? row.order_date : defaultOrderDate;
-                        }
-                        if (row.quantity) {
-                            row.quantity = row.quantity && !isNaN(Number(row.quantity)) ? Number(row.quantity) : defaultQuantity;
-                        }
-                    });
-
                     resolve(data);
                 };
                 reader.onerror = () => reject(new Error('Error reading file.'));
@@ -431,10 +364,7 @@
             }
 
             try {
-                const [salesData, purchaseData] = await Promise.all([
-                    processCSVFile(salesFile, ['stock_id', 'product_name', 'sales_date', 'quantity']),
-                    processCSVFile(purchaseFile, ['stock_id', 'product_name', 'purchase_date', 'order_date', 'quantity'])
-                ]);
+                const [salesData, purchaseData] = await Promise.all([processCSVFile(salesFile), processCSVFile(purchaseFile)]);
                 const products = {};
 
                 salesData.forEach(sale => {
@@ -445,7 +375,7 @@
                             sales_dates: []
                         };
                     }
-                    products[sale.stock_id].quantities.push(sale.quantity);
+                    products[sale.stock_id].quantities.push(parseInt(sale.quantity) || 0);
                     products[sale.stock_id].sales_dates.push(sale.sales_date);
                 });
 
